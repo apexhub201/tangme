@@ -47,6 +47,15 @@
       -webkit-user-select: none;
     }
 
+    /* Ẩn hoàn toàn thẻ audio để không hiện bất kỳ thanh điều khiển nào */
+    #bg-audio {
+      display: none;
+      width: 0;
+      height: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
     /* ==================== NỀN CHUYỂN CẢNH ==================== */
     .scene-background {
       position: fixed;
@@ -818,6 +827,11 @@
 </head>
 <body>
 
+  <!-- Nhạc nền lấy từ thư mục style/ (Không hiển thị bất kỳ nút hay biểu tượng nào) -->
+  <audio id="bg-audio" preload="auto" loop hidden>
+    <source src="style/nhac.mp3" type="audio/mpeg" />
+  </audio>
+
   <!-- Nền chuyển cảnh lãng mạn sang ấm áp -->
   <div class="scene-background" aria-hidden="true">
     <div class="bg-intro"></div>
@@ -1135,155 +1149,38 @@
         userScrolledManually = true;
       }, { passive: true });
 
-      /* ==================== ÂM THANH PIANO ẤM ÁP (WEB AUDIO API) ==================== */
+      /* ==================== PHÁT NHẠC TỪ THƯ MỤC style/ ==================== */
       const GentlePiano = (function () {
-        let ctx = null;
-        let masterGain = null;
-        let reverbNode = null;
-        let isPlaying = false;
-        let loopTimer = null;
-
-        // Tần số các nốt nhạc (Cung Fa Trưởng ấm áp, dịu dàng)
-        const NOTES = {
-          'F3': 174.61, 'G3': 196.00, 'A3': 220.00, 'Bb3': 233.08, 'C4': 261.63,
-          'D4': 293.66, 'E4': 329.63, 'F4': 349.23, 'G4': 392.00, 'A4': 440.00,
-          'Bb4': 466.16, 'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46,
-          'G5': 783.99, 'A5': 880.00
-        };
-
-        // Giai điệu piano trữ tình nhẹ nhàng
-        const MELODY_SEQUENCE = [
-          { time: 0.0,  note: 'F4',  dur: 2.6, vol: 0.22 },
-          { time: 0.45, note: 'C5',  dur: 2.2, vol: 0.25 },
-          { time: 0.9,  note: 'F5',  dur: 2.4, vol: 0.30 },
-          { time: 1.8,  note: 'E5',  dur: 1.8, vol: 0.26 },
-          { time: 2.5,  note: 'C5',  dur: 2.0, vol: 0.22 },
-
-          { time: 3.4,  note: 'D4',  dur: 2.6, vol: 0.20 },
-          { time: 3.85, note: 'A4',  dur: 2.2, vol: 0.24 },
-          { time: 4.3,  note: 'D5',  dur: 2.4, vol: 0.29 },
-          { time: 5.2,  note: 'C5',  dur: 2.0, vol: 0.25 },
-          { time: 5.9,  note: 'A4',  dur: 2.0, vol: 0.21 },
-
-          { time: 6.8,  note: 'Bb3', dur: 2.6, vol: 0.20 },
-          { time: 7.25, note: 'F4',  dur: 2.2, vol: 0.23 },
-          { time: 7.7,  note: 'Bb4', dur: 2.2, vol: 0.26 },
-          { time: 8.4,  note: 'C5',  dur: 1.8, vol: 0.27 },
-          { time: 9.1,  note: 'D5',  dur: 2.2, vol: 0.30 },
-
-          { time: 10.2, note: 'C4',  dur: 2.8, vol: 0.20 },
-          { time: 10.65,note: 'G4',  dur: 2.5, vol: 0.23 },
-          { time: 11.1, note: 'C5',  dur: 2.8, vol: 0.28 },
-          { time: 12.1, note: 'E5',  dur: 2.6, vol: 0.25 },
-
-          { time: 13.6, note: 'F3',  dur: 3.2, vol: 0.19 },
-          { time: 14.05,note: 'C4',  dur: 3.0, vol: 0.22 },
-          { time: 14.5, note: 'A4',  dur: 2.8, vol: 0.26 },
-          { time: 15.3, note: 'G4',  dur: 2.2, vol: 0.24 },
-          { time: 16.1, note: 'F4',  dur: 3.5, vol: 0.28 }
-        ];
-
-        function createWarmReverb(audioCtx) {
-          const length = audioCtx.sampleRate * 2.2;
-          const impulse = audioCtx.createBuffer(2, length, audioCtx.sampleRate);
-          for (let ch = 0; ch < 2; ch++) {
-            const data = impulse.getChannelData(ch);
-            for (let i = 0; i < length; i++) {
-              data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.8);
-            }
-          }
-          const convolver = audioCtx.createConvolver();
-          convolver.buffer = impulse;
-          return convolver;
-        }
-
-        function initContext() {
-          if (ctx) return true;
-          try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return false;
-            ctx = new AudioCtx();
-
-            masterGain = ctx.createGain();
-            masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
-            masterGain.gain.exponentialRampToValueAtTime(0.14, ctx.currentTime + 1.8);
-
-            const lowpass = ctx.createBiquadFilter();
-            lowpass.type = 'lowpass';
-            lowpass.frequency.setValueAtTime(1650, ctx.currentTime);
-
-            reverbNode = createWarmReverb(ctx);
-            const wetGain = ctx.createGain();
-            wetGain.gain.value = 0.35;
-
-            lowpass.connect(masterGain);
-            lowpass.connect(reverbNode);
-            reverbNode.connect(wetGain);
-            wetGain.connect(masterGain);
-            masterGain.connect(ctx.destination);
-
-            ctx._pianoBus = lowpass;
-            return true;
-          } catch (e) {
-            return false;
-          }
-        }
-
-        function playNote(freq, startTime, duration, volume) {
-          if (!ctx || !ctx._pianoBus) return;
-
-          const oscMain = ctx.createOscillator();
-          const oscHarmonic = ctx.createOscillator();
-          const noteGain = ctx.createGain();
-
-          oscMain.type = 'sine';
-          oscMain.frequency.setValueAtTime(freq, startTime);
-
-          oscHarmonic.type = 'triangle';
-          oscHarmonic.frequency.setValueAtTime(freq * 2, startTime);
-
-          const harmGain = ctx.createGain();
-          harmGain.gain.setValueAtTime(0.08, startTime);
-          harmGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.45);
-
-          noteGain.gain.setValueAtTime(0.0001, startTime);
-          noteGain.gain.linearRampToValueAtTime(volume, startTime + 0.045);
-          noteGain.gain.exponentialRampToValueAtTime(volume * 0.35, startTime + duration * 0.35);
-          noteGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-
-          oscMain.connect(noteGain);
-          oscHarmonic.connect(harmGain);
-          harmGain.connect(noteGain);
-          noteGain.connect(ctx._pianoBus);
-
-          oscMain.start(startTime);
-          oscHarmonic.start(startTime);
-          oscMain.stop(startTime + duration + 0.05);
-          oscHarmonic.stop(startTime + duration + 0.05);
-        }
-
-        function schedulePhrase() {
-          if (!isPlaying || !ctx) return;
-          const now = ctx.currentTime + 0.1;
-          for (let i = 0; i < MELODY_SEQUENCE.length; i++) {
-            const item = MELODY_SEQUENCE[i];
-            const freq = NOTES[item.note];
-            if (freq) {
-              playNote(freq, now + item.time, item.dur, item.vol);
-            }
-          }
-          loopTimer = setTimeout(schedulePhrase, 19200);
-        }
+        let fadeInterval = null;
 
         return {
           start: function () {
-            if (!initContext()) return;
-            if (ctx.state === 'suspended') {
-              ctx.resume().catch(function () {});
-            }
-            if (!isPlaying) {
-              isPlaying = true;
-              schedulePhrase();
+            const audio = document.getElementById('bg-audio');
+            if (!audio) return;
+
+            // Nếu nhạc đã đang phát thì giữ nguyên không phát đè
+            if (!audio.paused) return;
+
+            // Khởi đầu với âm lượng nhỏ và tăng dần lên mức ấm áp (0.6) để không gây giật mình
+            audio.volume = 0.05;
+            const playPromise = audio.play();
+
+            if (playPromise !== undefined) {
+              playPromise
+                .then(function () {
+                  if (fadeInterval) clearInterval(fadeInterval);
+                  fadeInterval = setInterval(function () {
+                    if (audio.volume < 0.56) {
+                      audio.volume = Math.min(0.6, audio.volume + 0.04);
+                    } else {
+                      audio.volume = 0.6;
+                      clearInterval(fadeInterval);
+                    }
+                  }, 180);
+                })
+                .catch(function () {
+                  // Nếu chưa có file nhạc trong style/ hoặc trình duyệt chặn, website vẫn hoạt động hoàn chỉnh
+                });
             }
           }
         };
@@ -1644,7 +1541,7 @@
         typingSessionId++;
         const currentSession = typingSessionId;
 
-        // Khởi chạy âm thanh piano nhẹ nhàng sau thao tác chạm của người dùng
+        // Phát file nhạc trong thư mục style/ ngay sau thao tác chạm của người dùng
         GentlePiano.start();
 
         // Chuẩn bị DOM lá thư
